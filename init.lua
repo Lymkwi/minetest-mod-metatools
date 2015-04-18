@@ -1,12 +1,23 @@
 -- Meta-tools mod ßý Mg --
--- License : GPLv2+
+-- License : GPLv3+
 --
 
 metatools = {}
 meta_info = {}
 
-metatools.handle_meta = function(name,value,username)
-
+metatools.actualize_metalist = function(name)
+	-- We need to actualize the tables
+	local counter = 1
+	meta_info[name]["pointer"] = minetest.get_meta(meta_info[name]["node"]):to_table()
+	while (counter < meta_info[name]["stratum"]+1) do
+		for k,v in pairs(meta_info[name]["pointer"]) do
+			if k == meta_info[name]["pathname"][counter] then
+				counter = counter + 1
+				meta_info[name]["pointer"] = v
+				break
+			end
+		end
+	end
 end
 
 metatools.get_metalist = function(meta,username)
@@ -25,6 +36,7 @@ minetest.register_craftitem("metatools:stick",{
 	on_use = function(itemstack, user, pointed_thing)
 		local username = user:get_player_name()
 		local nodepos  = pointed_thing.under
+		if not nodepos or not minetest.get_node(nodepos) then return end
 		local nodename = minetest.get_node(nodepos).name
 		local node	   = minetest.registered_nodes[nodename]
 		local meta	   = minetest.get_meta(nodepos)
@@ -57,8 +69,12 @@ minetest.register_chatcommand("meta", {
 			minetest.chat_send_player(name,"  open (x,y,z) : open node at pos x,y,z")
 			minetest.chat_send_player(name,"  show : show fields at node/depth")
 			minetest.chat_send_player(name,"  enter name : enter in field name at node/depth")
-			minetest.chat_send_player(name,"  quit name : quit field name at node/depth")
+			minetest.chat_send_player(name,"  quit : quit actual field at node/depth")
 			minetest.chat_send_player(name,"  set name value : set field name to value at node/depth")
+			minetest.chat_send_player(name,"  itemstack <subcommand>")
+			minetest.chat_send_player(name,"    read <field> : send you the itemstring, and amount of items in <field>")
+			minetest.chat_send_player(name,"    erase <field> : set to empty stack <field>")
+			minetest.chat_send_player(name,"    write <field> <itemstring> [amount]: set the itemstack <field>")
 			minetest.chat_send_player(name,"  close : close the current node")
 
 		elseif paramlist[1] == "open" then
@@ -103,8 +119,8 @@ minetest.register_chatcommand("meta", {
 			meta_info[name]["node"] = position
 			meta_info[name]["stratum"] = 0
 			meta_info[name]["pointer"] = minetest.get_meta(position):to_table()
-			meta_info[name]["path"] = {}
-			meta_info[name]["path"][0] = meta_info[name]["pointer"]
+			meta_info[name]["pathname"] = {}
+			meta_info[name]["pathname"][0] = "Node"
 
 			minetest.log("action","[metatools] Player "..name.." opened node "..minetest.get_node(position).name.." at pos "..paramlist[2])
 			return true
@@ -117,10 +133,7 @@ minetest.register_chatcommand("meta", {
 
 			minetest.chat_send_player(name,"- meta::close - You closed node "..minetest.get_node(meta_info[name]["node"]).name.." at position "..minetest.pos_to_string(meta_info[name]["node"]))
 			minetest.log("action","[metatools] Player "..name.." closed his node "..minetest.get_node(meta_info[name]["node"]).name.." at pos "..minetest.pos_to_string(meta_info[name]["node"]))
-			meta_info[name]["node"] = nil
-			meta_info[name]["stratum"] = nil
-			meta_info[name]["pointer"] = nil
-			meta_info[name]["path"] = nil
+			meta_info[name] = nil
 			return true
 
 		elseif paramlist[1] == "show" then
@@ -143,7 +156,6 @@ minetest.register_chatcommand("meta", {
 					minetest.chat_send_player(name,key.." => <userdata>")
 				end
 			end
-			minetest.chat_send_player(name,#metalist .. " items shown")
 			minetest.log("action","[metatools] Player "..name.." saw datas of node "..minetest.get_node(meta_info[name]["node"]).name.." at pos "..position.." with stratum "..meta_info[name]["stratum"])
 
 		elseif paramlist[1] == "enter" then
@@ -164,8 +176,9 @@ minetest.register_chatcommand("meta", {
 				if key == paramlist[2] and (type(value) == "table") then
 					minetest.chat_send_player(name,"- meta::enter - Entering stratum "..meta_info[name]["stratum"]+1 .. " through "..paramlist[2])
 					meta_info[name]["pointer"] = value
-					meta_info[name]["path"][meta_info[name]["stratum"]+1] = value
+					meta_info[name]["pathname"][meta_info[name]["stratum"]+1] = paramlist[2]
 					meta_info[name]["stratum"] = meta_info[name]["stratum"]+1
+					metatools.actualize_metalist(name)
 					minetest.log("action","[metatools] Player "..name.." entered stratum "..meta_info[name]["stratum"].." of node "..minetest.get_node(meta_info[name]["node"]).name.." at pos "..minetest.pos_to_string(meta_info[name]["node"]))
 					return true
 				end
@@ -189,8 +202,8 @@ minetest.register_chatcommand("meta", {
 			end
 
 			meta_info[name]["stratum"] = meta_info[name]["stratum"] - 1
-			meta_info[name]["pointer"] = meta_info[name]["path"][meta_info[name]["stratum"]]
-			meta_info[name]["path"][meta_info[name]["stratum"] + 1] = nil
+			meta_info[name]["pathname"][meta_info[name]["stratum"] + 1] = nil
+			metatools.actualize_metalist(name)
 
 			minetest.chat_send_player(name,"- meta::quit -  Stratum "..meta_info[name]["stratum"] + 1 .." quitted. Actual stratum is "..meta_info[name]["stratum"])
 			minetest.log("action","[metatools] Player "..name.." quited stratum "..meta_info[name]["stratum"]+1 .." of node "..minetest.get_node(meta_info[name]["node"]).name.." at pos "..minetest.pos_to_string(meta_info[name]["node"]))
@@ -238,7 +251,122 @@ minetest.register_chatcommand("meta", {
 
 			minetest.chat_send_player(name,"- meta::set - Variable set")
 			minetest.log("action","[metatools] Player " .. name .. " set variable " .. paramlist[2] .. " to value " .. paramlist[3] .. " in stratum " .. meta_info[name]["stratum"] .. " of node " .. minetest.get_node(meta_info[name]["node"]).name .. " at pos " .. minetest.pos_to_string(meta_info[name]["node"]))
+			metatools.actualize_metalist(name)
 			return true
+
+		elseif paramlist[1] == "itemstack" then
+			if not meta_info[name] or not meta_info[name]["node"] then
+				minetest.chat_send_player(name,"- meta::itemstack - You have no node open, use /meta open (x,y,z) to open one")
+				minetest.log("action","[metatools] Player "..name.." failed itemstack : no node opened")
+				return false
+			end
+
+			if not paramlist[2] then
+				minetest.chat_send_player(name,"- meta::itemstack - You must provide a subcommand for the itemstack subcommand")
+				minetest.log("action","[metatools] Player "..name.." failed itemstack : no subcommand")
+				return false
+			end
+
+			if not (meta_info[name]["stratum"] > 1 and meta_info[name]["pathname"][meta_info[name]["stratum"]-1] == "inventory") then
+				minetest.chat_send_player(name,"- meta::itemstack - Itemstack must only exist in inventory fields")
+				minetest.log("action","[metatools] Player " .. name .. " tried to access itemstack out of inventory's fields")
+				return false
+			end
+
+			if paramlist[2] == "read" then
+
+				if not paramlist[3] then
+					minetest.chat_send_player(name,"- meta::itemstack::read - You must provide a field name (eg. a number) to read")
+					minetest.log("action","[metatools] Player " .. name .. " failed itemstack reading : no field name")
+					return false
+				end
+
+				for key,value in pairs(meta_info[name]["pointer"]) do
+					if key ~= nil and key.."" == paramlist[3] then -- Forced conversion to string type
+						local itemstack = value
+						if not itemstack:get_name() or not itemstack:get_count() then
+							minetest.chat_send_player(name,"- meta::itemstack::read - Itemstack recognition failed. Field content isn't an itemstack")
+							minetest.log("action","[metatools] Player " .. name .. " tried to access field " .. key .. " which is not an itemstack")
+						end
+						local itemname  = itemstack:get_name()
+						local itemcount = itemstack:get_count()
+						if itemname == "" then
+							minetest.chat_send_player(name,"- meta::itemstack::read - Itemstack of field ".. key .." is empty")
+							minetest.log("action","[metatools] Player ".. name .. " read itemstack of field ".. key .." : empty stack")
+						else
+							minetest.chat_send_player(name,"- meta::itemstack::read - Itemstack of field ".. key .." : "..itemstack:get_name().." "..itemstack:get_count())
+							minetest.log("action","[metatools] Player ".. name .. " read itemstack of field ".. key .." : "..itemname.." "..itemcount)
+						end
+						return true
+					end
+				end
+
+				minetest.chat_send_player(name,"- meta::itemstack::read - Field " .. paramlist[3] .. " doesn't exist")
+				minetest.log("action","[metatools] Player " .. name .. " tried to access itemstack in unknown field " .. paramlist[3])
+
+			elseif paramlist[2] == "erase" then
+
+				if not paramlist[3] then
+					minetest.chat_send_player(name,"- meta::itemstack::write - You must provide a field name (eg. a number) to erase")
+					minetest.log("action","[metatools] Player " .. name .. " failed itemstack erasing : no field name")
+					return false
+				end
+
+				local meta = minetest.get_meta(meta_info[name]["node"])
+				local inv  = meta:get_inventory()
+				for key,value in pairs(meta_info[name]["pointer"]) do
+					if key ~= nil and key.."" == paramlist[3] then -- Forced conversion to string type
+						local itemstack = value
+						inv:set_stack(meta_info[name]["pathname"][meta_info[name]["stratum"]],key+0,nil)
+						minetest.chat_send_player(name,"- meta::itemstack::erase - Itemstack of field ".. key .." cleared")
+						minetest.log("action","[metatools] Player ".. name .. " cleared itemstack of field ".. key)
+						return true
+					end
+				end
+
+				minetest.chat_send_player(name,"- meta::itemstack::erase - Field " .. paramlist[3] .. " doesn't exist")
+				minetest.log("action","[metatools] Player " .. name .. " tried to erase itemstack in unknown field " .. paramlist[3])
+
+			elseif paramlist[2] == "write" then
+
+				if not paramlist[3] then
+					minetest.chat_send_player(name,"- meta::itemstack::write - You must provide a field name (eg. a number) to write to")
+					minetest.log("action","[metatools] Player " .. name .. " failed itemstack writing : no field name")
+					return false
+				end
+				if not paramlist[4] then
+					minetest.chat_send_player(name,"- meta::itemstack::write - You must provide an itemstring (eg. 'default:chest') for the itemstack to write")
+					minetest.log("action","[metatools] Player " .. name .. " failed itemstack writing : no itemstring")
+					return false
+				end
+
+				if paramlist[5] and paramlist[5] == 0 then
+					minetest.chat_send_player(name,"- meta::itemstack::write - It is useless to write 0 items. Use meta erase "..paramlist[3].." instead")
+					minetest.log("action","[metatools] Player ".. name .. " wanted to write 0 items in " .. paramlist[3] .. " inventory field")
+					return false
+				end
+
+				local itemstring = paramlist[4]
+				local itemcount  = paramlist[5] or 1
+
+				local meta = minetest.get_meta(meta_info[name]["node"])
+				local inv  = meta:get_inventory()
+				for key,value in pairs(meta_info[name]["pointer"]) do
+					if key ~= nil and key.."" == paramlist[3] then -- Forced conversion to string type
+						inv:set_stack(meta_info[name]["pathname"][meta_info[name]["stratum"]],key+0,ItemStack({name = itemstring,count = itemcount}))
+						minetest.chat_send_player(name,"- meta::itemstack::write - Itemstack written in field ".. key)
+						minetest.log("action","[metatools] Player ".. name .. " wrote itemstack '".. itemstring.. " " ..itemcount.."' in field ".. key)
+						return true
+					end
+				end
+
+				minetest.chat_send_player(name,"- meta::itemstack::write - Field " .. paramlist[3] .. " doesn't exist")
+				minetest.log("action","[metatools] Player " .. name .. " tried to write itemstack in unknown field " .. paramlist[3])
+
+			else
+				minetest.chat_send_player("- meta::itemstack - Subcommand " .. paramlist[2] .. " unknown. Typ /meta help for help")
+				return false
+			end
 		else
 			minetest.chat_send_player(name,"- meta - Subcommand " .. paramlist[1] .. " not known. Type /meta help for help")
 			return false
