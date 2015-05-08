@@ -2,6 +2,7 @@ Minetest mod metatools
 ######################
 
 A mod inspired by mgl512's itemframe issue
+Version : 1.0
 
 # Authors
  - LeMagnesium / Mg / ElectronLibre : Source code writer
@@ -16,17 +17,19 @@ stratum.
 "metatools_stick.png" by Ataron (CC-BY-NC-SA)
 
 # Todo
- - Add a check if set is done in Node/fields/
  - Add a table handler for meta::set
+ - Create a better ASCII-art graph at the end of this file...
 
 # Special thanks
  - mgl512 (Le_Docteur) for its locked itemframe which gave me the idea of a tool
 allowing to see/edit metadatas
  - Ataron who created the stick's texture
+ - palige who agreed to test the mod for its first release
 
 # Command tutorial
 
  - help										=> Get help
+ - version									=> Get version
  - open (x,y,z)								=> Open the node to manipulate at pos (x,y,z)
  - show 									=> Show fields/path list at actual position
  - enter <path>								=> Enter next stratum through <path>

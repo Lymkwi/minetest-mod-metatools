@@ -4,6 +4,7 @@
 
 metatools = {}
 meta_info = {}
+metatools.version = "1.0"
 
 metatools.actualize_metalist = function(name)
 	-- We need to actualize the tables
@@ -64,8 +65,10 @@ minetest.register_chatcommand("meta", {
 
 
 		if paramlist[1] == "help" then
-			minetest.chat_send_player(name,"Meta help: /meta +")
+			minetest.chat_send_player(name,"Metatools version " .. metatools.version)
+			minetest.chat_send_player(name,"Help: /meta +")
 			minetest.chat_send_player(name,"  help : show this help")
+			minetest.chat_send_player(name,"  version : show metatools version")
 			minetest.chat_send_player(name,"  open (x,y,z) : open node at pos x,y,z")
 			minetest.chat_send_player(name,"  show : show fields at node/depth")
 			minetest.chat_send_player(name,"  enter name : enter in field name at node/depth")
@@ -76,6 +79,9 @@ minetest.register_chatcommand("meta", {
 			minetest.chat_send_player(name,"    erase <field> : set to empty stack <field>")
 			minetest.chat_send_player(name,"    write <field> <itemstring> [amount]: set the itemstack <field>")
 			minetest.chat_send_player(name,"  close : close the current node")
+
+		elseif paramlist[1] == "version" then
+			minetest.chat_send_player(name, "- meta::version - Metatools' version : " .. metatools.version)
 
 		elseif paramlist[1] == "open" then
 			if meta_info[name] and meta_info[name]["node"] then
@@ -225,6 +231,11 @@ minetest.register_chatcommand("meta", {
 			if not paramlist[3] then
 				minetest.chat_send_player(name,"- meta::set - You must provide a value for the variable you want to set")
 				minetest.log("action","[metatools] Player "..name.." failed setting variable ".. paramlist[3] .." : no value given")
+				return false
+			end
+
+			if meta_info[name]["stratum"] ~= 1 then
+				minetest.chat_send_player(name, "- meta::set - Warning: Meta set can only work at stratum 1 (node/fields). Use itemstack in node/inventory/* or any other command for other stratums")
 				return false
 			end
 
