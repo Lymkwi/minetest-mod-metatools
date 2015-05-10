@@ -32,37 +32,37 @@ allowing to see/edit metadatas
  - version									=> Get version
  - open (x,y,z)								=> Open the node to manipulate at pos (x,y,z)
  - show 									=> Show fields/path list at actual position
- - enter <path>								=> Enter next stratum through <path>
+ - enter _path_								=> Enter next stratum through _path_
  - quit										=> Quit actual field and go back to previous stratum
- - set <name> <value>						=> Set metadata <name> to <value> (create it if it doesn't exist)
+ - set _name_ _value_						=> Set metadata _name_ to _value_ (create it if it doesn't exist)
  - itemstack								=> Manipulate itemstacks in Node/inventory/*/
-	- read <name>							=> Read itemstack at field name (itemstring and count)
-	- erase <name>							=> Erase itemstack at field name
-	- write <name> <itemstring> [<count>]	=> Set itemstack in field <name> with item <itemstring> and count <count>. Default count is one, 0 not handled.
+	- read _name_							=> Read itemstack at field name (itemstring and count)
+	- erase _name_							=> Erase itemstack at field name
+	- write _name_ _itemstring_ [_count_]	=> Set itemstack in field _name_ with item _itemstring_ and count _count_. Default count is one, 0 not handled.
  - close									=> Close node
 
  Node metadatas look like this :
 
- Stratum :	0		1		 2		...
-			Nodes/
+			0	1		2		3		...
+			Node/
 				|
-				+- fields
-				|	|
-				|	+-		foo
-				|	+-		bar
-				|	+-		...
-				+- inventory
-					|
-					+-		main
-					|		|
-					|		+-		1
-					|		+-		2
-					|		+-		3
-					|		+-		...
-					+-		craft
-					|		|
-					|		+-		1
-					|		+-		2
-					|		+-		3
-					|		+-		...
-					+-		...
+				+- 		fields
+				|		|
+				|		+-		foo
+				|		+-		bar
+				|		+-		...
+				+-		inventory
+						|
+						+-		main
+						|		|
+						|		+-		1
+						|		+-		2
+						|		+-		3
+						|		+-		...
+						+-		craft
+						|		|
+						|		+-		1
+						|		+-		2
+						|		+-		3
+						|		+-		...
+						+-		...
