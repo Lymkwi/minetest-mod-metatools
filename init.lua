@@ -130,6 +130,7 @@ minetest.register_chatcommand("meta", {
 
 			minetest.log("action","[metatools] Player "..name.." opened node "..minetest.get_node(position).name.." at pos "..paramlist[2])
 			return true
+
 		elseif paramlist[1] == "close" then
 			if not meta_info[name] or not meta_info[name]["node"] then
 				minetest.chat_send_player(name,"- meta::close - You have no node open, use /meta open (x,y,z) to open one")
@@ -143,6 +144,7 @@ minetest.register_chatcommand("meta", {
 			return true
 
 		elseif paramlist[1] == "show" then
+
 			if not meta_info[name] or not meta_info[name]["node"] then
 				minetest.chat_send_player(name,"- meta::show - You have no node open, use /meta open (x,y,z) to open one")
 				minetest.log("action","[metatools] Player "..name.." failed showing node : no node opened")
@@ -378,6 +380,65 @@ minetest.register_chatcommand("meta", {
 				minetest.chat_send_player("- meta::itemstack - Subcommand " .. paramlist[2] .. " unknown. Typ /meta help for help")
 				return false
 			end
+
+		--[[
+			Table method.
+			Should I keep this knowing that tables shouldn't be stocked in metadatas?
+		]]
+		elseif paramlist[1] == "table" then
+			if not meta_info[name] or not meta_info[name]["node"] then
+				minetest.chat_send_player(name,"- meta::table - You have no node open, use /meta open (x,y,z) to open one")
+				minetest.log("action","[metatools] Player "..name.." failed table : no node opened")
+				return false
+			end
+
+			if not paramlist[2] then
+				minetest.chat_send_player(name, "- meta::table - No subcommand given, see /meta help for help in table command")
+				minetest.log("action","[metatools] Player "..name.." failed table : no subcommand given")
+				return false
+			end
+
+			if not (meta_info[name]["stratum"] >= 1 and meta_info[name]["pathname"][meta_info[name]["stratum"]] == "fields") then
+				minetest.chat_send_player(name,"- meta::table - tables must only exist in metadata fields")
+				minetest.log("action","[metatools] Player " .. name .. " tried to use table out of metadatas's fields")
+				return false
+			end
+
+			if paramlist[2] == "serialize" then
+				if not paramlist[3] then
+					minetest.chat_send_player(name,"- meta::table::serialize - Name needed for serialize")
+					minetest.log("action","[metatools] Player "..name.." asked for serialize without name")
+					return false
+				end
+
+				for index,table in pairs(meta_info[name]["pointer"]) do
+					if index == paramlist[3] and type(table) == "table" then
+						minetest.chat_send_player(name,"Raw datas : " .. minetest.serialize(table))
+						return true
+					end
+				end
+
+				minetest.chat_send_player(name,"Table " .. paramlist[3] .. " not found")
+				minetest.log("action","[metatools] Player " .. name .. " asked for an unknown table")
+				return false
+
+--[[			elseif paramlist[2] == "create" then
+				if not paramlist[3] then
+					minetest.chat_send_player(name,"- meta::table::create - No name given to create table")
+					minetest.log("action","[metatools] Player " .. name .. " wanted to create a table without any name")
+				end
+
+				meta_info[name]["pointer"][paramlist[3]--] = {}
+				minetest.get_meta(meta_info[name]["node"]):from_table({
+					fields = meta_info[name]["pointer"],
+					inventory = minetest.get_meta(meta_info[name]["node"]):to_table().inventory
+				})
+
+				minetest.chat_send_player(name,"- meta::table:create - Empty table created at index " .. paramlist[3])
+				minetest.log("action","[metatools] Player " .. name .. " created empty table at index " .. paramlist[3])
+				return true]]
+			end
+
 		else
 			minetest.chat_send_player(name,"- meta - Subcommand " .. paramlist[1] .. " not known. Type /meta help for help")
 			return false

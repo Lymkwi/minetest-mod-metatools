@@ -17,8 +17,9 @@ stratum.
 "metatools_stick.png" by Ataron (CC-BY-NC-SA)
 
 # Todo
- - Add a table handler for meta::set
- - Create a better ASCII-art graph at the end of this file...
+ - Rewrite the table stocking : a variable containing a copy of the global
+   table returned by :to_table(), on which we would work, and a save command to
+   apply it on the node
 
 # Special thanks
  - mgl512 (Le_Docteur) for its locked itemframe which gave me the idea of a tool
