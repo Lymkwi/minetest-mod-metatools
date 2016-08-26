@@ -232,7 +232,7 @@ minetest.register_chatcommand("meta", {
 
 			if not paramlist[3] then
 				minetest.chat_send_player(name,"- meta::set - You must provide a value for the variable you want to set")
-				minetest.log("action","[metatools] Player "..name.." failed setting variable ".. paramlist[3] .." : no value given")
+				minetest.log("action","[metatools] Player "..name.." failed setting variable ".. paramlist[2] .." : no value given")
 				return false
 			end
 
