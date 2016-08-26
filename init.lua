@@ -267,6 +267,34 @@ minetest.register_chatcommand("meta", {
 			metatools.actualize_metalist(name)
 			return true
 
+		elseif paramlist[1] == "erase" then
+			if not meta_info[name] or not meta_info[name]["node"] then
+				minetest.chat_send_player(name,"- meta::erase - You have no node open, use /meta open (x,y,z) to open one")
+				minetest.log("action","[metatools] Player "..name.." failed erasing value : no node opened")
+				return false
+			end
+
+			if not paramlist[2] then
+				minetest.chat_send_player(name,"- meta::erase - You must provide a variable name for the variable you want to erase")
+				minetest.log("action","[metatools] Player "..name.." failed erasing value : no variable name given")
+				return false
+			end
+
+			if meta_info[name]["stratum"] ~= 1 then
+				minetest.chat_send_player(name, "- meta::erase - Warning: Meta set can only work at stratum 1 (node/fields). Use itemstack in node/inventory/* or any other command for other stratums")
+				return false
+			end
+
+			local meta = minetest.get_meta(meta_info[name]["node"])
+			local meta_table = meta:to_table()
+			meta_table["fields"][paramlist[2]] = nil
+			meta:from_table(meta_table)
+
+			minetest.chat_send_player(name,"- meta::erase - Variable erased")
+			minetest.log("action","[metatools] Player " .. name .. " erased variable " .. paramlist[2] .. " in stratum " .. meta_info[name]["stratum"] .. " of node " .. minetest.get_node(meta_info[name]["node"]).name .. " at pos " .. minetest.pos_to_string(meta_info[name]["node"]))
+			metatools.actualize_metalist(name)
+			return true
+
 		elseif paramlist[1] == "itemstack" then
 			if not meta_info[name] or not meta_info[name]["node"] then
 				minetest.chat_send_player(name,"- meta::itemstack - You have no node open, use /meta open (x,y,z) to open one")
