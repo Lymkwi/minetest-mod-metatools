@@ -1,5 +1,5 @@
 --[[
---	Metadata Tools
+	--	Metadata Tools
 --
 --	A mod providing write and read access to a nodes' metadata using commands
 --	ßÿ Lymkwi/LeMagnesium/Mg ; 2015-2016
@@ -14,7 +14,9 @@
 
 metatools = {} -- Public namespace
 local playerdata = {} -- Will hold the positions of all players currently using metatools
-local version = 1.2
+local contexts = {}
+local version = 1.3
+local nodelock = {}
 
 minetest.register_craftitem("metatools:stick",{
 	description = "Meta stick",
@@ -46,269 +48,377 @@ function metatools.build_param_str(table, index, separator)
 	return str
 end
 
-function metatools.get_metalist(pname)
-	if not pname or not playerdata[pname] then return end
+function assign_context(pos, mode, owner)
+	local i = 1
+	while contexts[i] do i = i + 1 end
 
-	local metabase = minetest.get_meta(playerdata[pname].position):to_table()[playerdata[pname].mode]
-	for strat = 1, playerdata[pname].stratum-1 do
-		if metabase[playerdata[pname].path[strat]] then
-			metabase = metabase[playerdata[pname].path[strat]]
-		else
-			playerdata[pname.stratum] = strat
-			return true, "- meta::get_metalist - Warning! Gateway '" .. playerdata[pname].path[strat] .. "' doesn't exist any more, saying at Stratum " .. strat
-		end
-	end
-	return metabase
-end
-
-function metatools.open_node(pname, pos, mode)
-	if not pname then
-		return false, "- meta::open - No player name provided"
-	end
-
-	-- If no mode, open fields
-	if not mode then
-		mode = "fields"
-	-- Or else, check for the mode to be correct
-	elseif type(mode) ~= "string" or (mode ~= "fields" and mode ~= "inventory") then
-		return false, ("- meta::open - Invalid opening mode : %s ; it must be either 'fields' or 'inventory'"):format(mode)
-	end
-
-	-- Is the position correct?
-	if not pos.x or not pos.y or not pos.z then
-		return false, "Invalid position table " .. (dump(pos):gsub('\n', ""))
-	end
-
-	minetest.forceload_block(pos)
-	playerdata[pname] = {
+	contexts[i] = {
+		owner = owner or "",
 		position = pos,
-		mode = mode,
-		path = {},
-		stratum = 1,
+		list = "",
+		mode = mode
 	}
-	return true, "- meta::open - Node " .. minetest.get_node(pos).name .. " at " .. minetest.pos_to_string(pos) .. " opened (mode: " .. mode .. ")"
 
+	nodelock[minetest.pos_to_string(pos)] = owner or ""
+
+	return i
 end
 
-function metatools.close_node(pname)
-	if not pname then
-		return false, "- meta::close - No player name provided"
-	end
-
-	-- Do they have an open node?
-	if not playerdata[pname] then
-		return true, "- meta::close - No open node found, no data to discard"
-	end
-
-	-- Discard everything
-	minetest.forceload_free_block(playerdata[pname].position)
-	playerdata[pname] = nil
-	return true, "- meta::close - Node closed and data discarded"
+function free_context(contextid)
+	nodelock[minetest.pos_to_string(contexts[contextid].position)] = nil
+	contexts[contextid] = nil
+	return true
 end
 
-function metatools.show(pname)
-	if not pname or not playerdata[pname] then return false end
+function assert_contextid(ctid)
+	return contexts[ctid] ~= nil
+end
 
-	-- List fields
-	local fieldlist = {}
-	for name, value in pairs(metatools.get_metalist(pname)) do
-		if type(value) == "table" then
-			table.insert(fieldlist, 1, name .. " : (size " .. #value .. ") -> Stratum " .. playerdata[pname].stratum + 1)
-		elseif value.get_count and value.get_name then -- It's an ItemStack
-			table.insert(fieldlist, 1, name .. " = " .. ("ItemStack({name=%s, count=%d, metadata=%s})"):format(dump(value:get_name()), value:get_count(), dump(value:get_metadata())))
+function assert_ownership(ctid, name)
+	return contexts[ctid].owner == "" or (name and contexts[ctid].owner == name)
+end
+
+function assert_pos(pos)
+	return pos and pos.x and pos.y and pos.z and minetest.pos_to_string(pos)
+end
+
+function assert_mode(mode)
+	return mode and (mode == "fields" or mode == "inventory")
+end
+
+function assert_poslock(pos)
+	return nodelock[minetest.pos_to_string(pos)] == nil
+end
+
+function assert_specific_mode(contextid, mode)
+	return assert_contextid(contextid) and contexts[contextid].mode == mode
+end
+
+function assert_field_type(ftype)
+	return ftype and type(ftype) == "string" and (ftype == "int" or ftype == "float" or ftype == "string")
+end
+
+function assert_integer(int)
+	return int and tonumber(int) and tonumber(int) % 1 == 0
+end
+
+function dump_normalize(dmp)
+	return dump(dmp):gsub('\n', ''):gsub('\t', ' ')
+end
+
+function meta_exec(scope, func, ...)
+	local ret, msg = func(...)
+	if ret then
+		return true, ("- %s - Success : %s"):format(scope, msg)
+	else
+		return false, ("- %s - Failure : %s"):format(scope, msg)
+	end
+end
+
+function metatools.contexts_summary()
+	local ctxs = {}
+	for ctxid, ctx in pairs(contexts) do
+		table.insert(ctxs, 1, {id=ctxid, pos=ctx.position, owner=ctx.owner})
+	end
+	return true, ctxs
+end
+
+function metatools.open_node(pos, mode, owner)
+	if not assert_pos(pos) then
+		return false, "invalid pos " .. dump_normalize(pos)
+	end
+
+	if not assert_mode(mode) then
+		return false, "invalid mode " .. dump_normalize(mode)
+	end
+
+	if not assert_poslock(pos) then
+		if nodelock[minetest.pos_to_string(pos)] ~= "" then
+			return false, "node already opened by " .. nodelock[minetest.pos_to_string(pos)]
 		else
-			table.insert(fieldlist, 1, name .. " = " .. dump(value):gsub('\n', ""))
+			return false, "node already opened"
 		end
 	end
-	return true, fieldlist
+
+	return true, "opened node " .. minetest.get_node(pos).name .. " at " .. minetest.pos_to_string(pos) .. " in context ID " .. assign_context(pos, mode, owner)
 end
 
-function metatools.enter(pname, field)
-	if not pname or not playerdata[pname] then return false end
-	
-	local metalist = metatools.get_metalist(pname)
-	if not metalist[field] then
-		return false, "- meta::enter - No such field '" .. field .. "'"
-	else
-		playerdata[pname].path[playerdata[pname].stratum] = field
-		playerdata[pname].stratum = playerdata[pname].stratum + 1
-		return true, "- meta::enter - Entered stratum " .. playerdata[pname].stratum .. " through gateway '" .. field .. "'"
+function metatools.close_node(contextid)--, closer)
+	if not assert_contextid(contextid) then
+		return false, "invalid contextid " .. dump_normalize(contextid)
 	end
+
+--	if closer and not assert_ownership(contextid, closer) then
+--		return false, "you do not have permission to close that node"
+--	end
+
+	free_context(contextid)
+	return true, "node closed"
 end
 
-function metatools.leave(pname)
-	if not pname or not playerdata[pname] then return false end
-
-	local metalist = metatools.get_metalist(pname)
-	if playerdata[pname].stratum == 1 then
-		return false, "- meta::leave - You cannot leave the top stratum, use '/meta close' if you wish to leave the node"
+function metatools.show(contextid)
+	if not assert_contextid(contextid) then
+		return false, "invalid contextid " .. dump_normalize(contextid)
 	end
 
-	playerdata[pname].stratum = playerdata[pname].stratum - 1
-	playerdata[pname].path[playerdata[pname].stratum] = nil
-	return true, "- meta::leave - Back at stratum " .. playerdata[pname].stratum
+	local ctx = contexts[contextid]
+	local metabase = minetest.get_meta(ctx.position):to_table()[ctx.mode]
+	if assert_specific_mode(contextid, "inventory") and ctx.list ~= "" then
+		metabase = metabase[ctx.list]
+	end
+
+	return true, metabase
 end
 
-function metatools.set(pname, varname, varval)
-	if not pname or not playerdata[pname] then return false end
-
-	if playerdata[pname].mode ~= "fields" then
-		return false, "- meta::set - Your mode is '" .. playerdata[pname].mode .. "', but you need to open the node in 'fields' mode to set meta variables"
+function metatools.list_enter(contextid, listname)
+	if not assert_contextid(contextid) then
+		return false, "invalid contexid " .. dump_normalize(contextid)
 	end
 
-	if not varname then
-		return false, "- meta::set - No variable name provided"
+	if not assert_specific_mode(contextid, "inventory") then
+		return false, "invalid mode, inventory mode required"
+	end
+
+	if not listname then
+		return false, "no list name provided"
+	end
+
+	local ctx = contexts[contextid]
+	if ctx.list ~= "" then
+		return false, "unable to reach another list until leaving the current one"
+	end
+
+	local _, metabase = metatools.show(contextid)
+	if not metabase[listname] or type(metabase[listname]) ~= "table" then
+		return false, "inexistent or invalid list called " .. dump_normalize(listname)
+	end
+
+	contexts[contextid].list = listname
+	return true, "entered list " .. listname
+end
+
+function metatools.list_leave(contextid)
+	if not assert_contextid(contextid) then
+		return false, "invalid contextid " .. dump_normalize(contextid)
+	end
+
+	if not assert_specific_mode(contextid, "inventory") then
+		return false, "invalid mode, inventory mode required"
+	end
+
+	local ctx = contexts[contextid]
+	if ctx.list == "" then
+		return false, "cannot leave, not in a list"
+	end
+
+	ctx.list = ""
+	return true, "left list"
+end
+
+function metatools.set(contextid, ftype, varname, varval)
+	if not assert_contextid(contextid) then
+		return false, "invalid contextid " .. dump_normalize(contextid)
+	end
+
+	if not assert_specific_mode(contextid, "fields") then
+		return false, "invalid mode, fields mode required"
+	end
+
+	if not assert_field_type(ftype) then
+		return false, "invalid field type " .. dump_normalize(ftype)
+	end
+
+	if not varname or varname == "" then
+		return false, "invalid or empty variable name"
 	end
 
 	if not varval then
-		return false, "- meta::set - No variable value provided"
+		return false, "missing value, use unset to set variable to nil"
 	end
 
-	local meta = minetest.get_meta(playerdata[pname].position)
-	if tonumber(varval) then
-		({
-			[false] = meta.set_float,
-			[true] = meta.set_int,
-		})[(tonumber(varval) % 1 == 0)](meta, varname, tonumber(varval))
+	local ctx = contexts[contextid]
+	local meta = minetest.get_meta(ctx.position)
+
+	if ftype == "string" then
+		meta:set_string(varname, ("%s"):format(varval))
+	elseif ftype == "int" then
+		if not tonumber(varval) then
+			return false, "invalid integer value " .. dump_normalize(varval)
+		end
+		meta:set_int(varname, tonumber(varval))
 	else
-		meta:set_string(varname, varval)
+		if not tonumber(varval) then
+			return false, "invalid float value " .. dump_normalize(varval)
+		end
+		meta:set_float(varname, tonumber(varval))
 	end
-
-	return true, "- meta::set - Value of variable '" .. varname .. "' set to " .. dump(varval):gsub('\n', "")
+	return true, "value of field " .. varname .. " set to " .. varval
 end
 
-function metatools.unset(pname, varname)
-	if not pname or not playerdata[pname] then return false end
-
-	if playerdata[pname].mode ~= "fields" then
-		return false, "- meta::unset - Your mode is '" .. playerdata[pname].mode .. "', but you need to open the node in 'fields' mode to unset meta variables"
+function metatools.unset(contextid, varname)
+	if not assert_contextid(contextid) then
+		return false, "invalid contextid " .. dump_normalize(contextid)
 	end
 
-	if not varname then
-		return false, "- meta::unset - No variable name provided"
+	if not assert_specific_mode(contextid, "fields") then
+		return false, "invalid mode, fields mode required"
 	end
 
-	local meta = minetest.get_meta(playerdata[pname].position)
-	meta:set_string(varname, nil)
+	if not varname or varname == "" then
+		return false, "invalid or empty variable name"
+	end
 
-	return true, "- meta::unset - Variable '" .. varname .. "' unset"
+	minetest.get_meta(contexts[contextid].position):set_string(varname, nil)
+	return true, "field " .. varname .. " unset"
 end
 
-function metatools.purge(pname)
-	if not pname or not playerdata[pname] then return false end
-
-	if playerdata[pname].mode ~= "fields" then
-		return false, "- meta::purge - Your mode is '" .. playerdata[pname].mode .. "', but you need to open the node in 'fields' mode to purge all metadata"
+function metatools.purge(contextid)
+	if not assert_contextid(contextid) then
+		return false, "invalid context id " .. dump_normalize(contextid)
 	end
 
-	minetest.get_meta(playerdata[pname].position):from_table(nil)
-	playerdata[pname].path = {}
-	playerdata[pname].stratum = 1
-
-	return true, "- meta::purge - Metadata purged, back at stratum 1"
+	local ctx = contexts[contextid]
+	local meta = minetest.get_meta(ctx.position)
+	if ctx.mode == "inventory" then
+		local inv = meta:get_inventory()
+		inv:set_lists(nil)
+		return true, "inventory purged"
+	
+	else
+		meta:from_table(nil)
+		return true, "fields purged"
+	end
 end
 
-function metatools.list_init(pname, listname, size)
-	if not pname or not playerdata[pname] then return false end
+function metatools.list_init(contextid, listname, size)
+	if not assert_contextid(contextid) then
+		return false, "invalid context id " .. dump_normalize(contextid)
+	end
 
-	if playerdata[pname].mode ~= "inventory" then
-		return false, "- meta::list::init - Your mode is '" .. playerdata[pname].mode .. "', but you need to open the node in 'inventory' mode to initialize a list"
+	if not assert_specific_mode(contextid, "inventory") then
+		return false, "invalid mode, inventory mode is required"
 	end
 
 	if not listname or listname == "" then
-		return false, "- meta::list::init - You must provide a name for the list to initialize"
+		return false, "missing or empty list name"
 	end
 
-	if not size then
-		return false, "- meta::list::init - You must provide a size for the new list"
+	if not size or not assert_integer(size) or tonumber(size) < 0 then
+		return false, "invalid size " .. dump_normalize(contextid)
 	end
 
-	if not tonumber(size) or tonumber(size) % 1 ~= 0 then
-		return false, "- meta::list::init - Invalid size : '" .. size .. "'"
-	end
-
-	local inv = minetest.get_meta(playerdata[pname].position):get_inventory()
+	local inv = minetest.get_meta(contexts[contextid].position):get_inventory()
 	inv:set_list(listname, {})
 	inv:set_size(listname, tonumber(size))
 
-	return true, "- meta::list::init - List '" .. listname .. "' of size " .. size .. " created"
+	return true, "list " .. listname .. " of size " .. size .. " created"
 end
 
-function metatools.list_delete(pname, listname)
-	if not pname or not playerdata[pname] then return false end
+function metatools.list_delete(contextid, listname)
+	if not assert_contextid(contextid) then
+		return false, "invalid context id " .. dump_normalize(contextid)
+	end
 
-	if playerdata[pname].mode ~= "inventory" then
-		return false, "- meta::list::delete - Your mode is '" .. playerdata[pname].mode .. "', but you need to open the node in 'inventory' mode to delete a list"
+	if not assert_specific_mode(contextid, "inventory") then
+		return false, "invalid mode, inventory mode is required"
 	end
 
 	if not listname or listname == "" then
-		return false, "- meta::list::delete - You must provide a name for the list to delete"
+		return false, "missing or empty list name"
 	end
 
-	local inv = minetest.get_meta(playerdata[pname].position):get_inventory()
-	inv:set_list(listname, nil)
+	local ctx = contexts[contextid]
+	if ctx.list == listname then
+		ctx.list = ""
+	end
+
+	local inv = minetest.get_meta(ctx.position):get_inventory()
+	inv:set_list(listname, {})
 	inv:set_size(listname, 0)
 
-	return true, "- meta::list::delete - List '" .. listname .. "' deleted"
+	return true, "list " .. listname .. " deleted"
 end
 
-function metatools.itemstack_erase(pname, index)
-	if not pname or not playerdata[pname] then return false end
-
-	if playerdata[pname].mode ~= "inventory" then
-		return false, "- meta::itemstack::erase - Your mode is '" .. playerdata[pname].mode .. "', but you need to open the node in 'inventory' mode to erase itemstacks"
+function metatools.itemstack_erase(contextid, index)
+	if not assert_contextid(contextid) then
+		return false, "invalid context id " .. dump_normalize(contextid)
 	end
 
-	if not index then
-		return false, "- meta::itemstack::erase - You must provide an index for the itemstack to erase"
+	if not assert_specific_mode(contextid, "inventory") then
+		return false, "invalid mode, inventory mode required"
 	end
 
-	if not tonumber(index) or tonumber(index) % 1 ~= 0 then
-		return false, "- meta::itemstack::erase - Invalid index : '" .. index .. "'"
+	if not assert_integer(index) or tonumber(index) < 0 then
+		return false, "invalid index"
 	end
 
-	if playerdata[pname].stratum < 2 then
-		return false, "- meta::itemstack::erase - You can only erase an itemstack inside and inventory"
+	local ctx = contexts[contextid]
+	if ctx.list == "" then
+		return false, "your presence is required in a list"
 	end
 
-	local inv = minetest.get_meta(playerdata[pname].position):get_inventory()
-	inv:set_stack(playerdata[pname].path[#playerdata[pname].path], tonumber(index), nil)
-	return true, "- meta::itemstack::erase - Itemstack erased"
+	local inv = minetest.get_meta(ctx.position):get_inventory()
+	if tonumber(index) > inv:get_size(ctx.list) then
+		return false, "index value higher than list size"
+	end
+	inv:set_stack(ctx.list, tonumber(index), nil)
+	return true, "itemstack at index " .. index .. " erased"
 end
 
-function metatools.itemstack_write(pname, index, data)
-	if not pname or not playerdata[pname] then return false end
-
-	if playerdata[pname].mode ~= "inventory" then
-		return false, "- meta::itemstack::write - Your mode is '" .. playerdata[pname].mode .. "', but you need to open the node in 'inventory' mode to write itemstacks"
+function metatools.itemstack_write(contextid, index, data)
+	if not assert_contextid(contextid) then
+		return false, "invalid context id " .. dump_normalize(contextid)
 	end
 
-	if not index then
-		return false, "- meta::itemstack::write - You must provide an index for the itemstack to erase"
+	if not assert_specific_mode(contextid, "inventory") then
+		return false, "invalid mode, inventory mode required"
 	end
 
-	if not tonumber(index) or tonumber(index) % 1 ~= 0 then
-		return false, "- meta::itemstack::write - Invalid index : '" .. index .. "'"
+	if not assert_integer(index) or tonumber(index) < 0 then
+		return false, "invalid index"
 	end
 
-	if not data then
-		return false, "- meta::itemstack::write - You must provide a string representing the itemstack"
-	end
-
-	if playerdata[pname].stratum < 2 then
-		return false, "- meta::itemstack::write - You can only write itemstacks inside an inventory (you are at stratum " .. playerata[pname].stratum .. ")"
-	end
-
-	local stack = ItemStack({name = data:split(" ")[1], count = tonumber(data:split(" ")[2]) or 1})
+	local stack = ItemStack(data)
 	if not stack then
-		return false, "- meta::itemstack::write - Invalid metadata representation : '" .. data "'"
+		return false, "invalid itemstack representation " .. dump_normalize(data)
 	end
 
-	
-	minetest.get_meta(playerdata[pname].position):get_inventory():set_stack(playerdata[pname].path[#playerdata[pname].path], tonumber(index), stack)
-	return true, "- meta::itemstack::write - Itemstack " .. data .. " written at index " .. index .. " of list " .. playerdata[pname].path[#playerdata[pname].path]
+	local ctx = contexts[contextid]
+	if ctx.list == "" then
+		return false, "your presence is required in a list"
+	end
+
+	local inv = minetest.get_meta(ctx.position):get_inventory()
+	if tonumber(index) > inv:get_size(ctx.list) then
+		return false, "index value higher than list size"
+	end
+	inv:set_stack(ctx.list, tonumber(index), stack)
+	return true, "itemstack at index " .. index .. " written"
 end
 
+function metatools.itemstack_add(contextid, data)
+	if not assert_contextid(contextid) then
+		return false, "invalid context id " .. dump_normalize(contextid)
+	end
+
+	if not assert_specific_mode(contextid, "inventory") then
+		return false, "invalid mode, inventory mode required"
+	end
+
+	local stack = ItemStack(data)
+	if not stack then
+		return false, "invalid itemstack representation " .. dump_normalize(data)
+	end
+
+	local ctx = contexts[contextid]
+	if ctx.list == "" then
+		return false, "your presence is required in a list"
+	end
+
+	local inv = minetest.get_meta(ctx.position):get_inventory()
+	inv:add_item(ctx.list, stack)
+	return true, "added " .. data .. " in list " .. ctx.list
+end
 
 -- Main chat command
 minetest.register_chatcommand("meta", {
@@ -341,112 +451,83 @@ minetest.register_chatcommand("meta", {
 			return true, "- meta::help - Help : \n" ..
 				"- meta::help - /meta version : Prints out the version\n" ..
 				"- meta::help - /meta help : This very command\n" ..
-				"- meta::help - /meta open (x,y,z) [mode] : Open not at (x,y,z) with mode 'mode' (either 'fields' or 'inventory'; default is 'fields')\n" ..
-				"- meta::help - /meta close : Close the node you're operating on\n" ..
-				"- meta::help - /meta show : Show you the variables and gateways at your depth level/stratum\n" ..
-				"- meta::help - /meta enter <field> : Enter deeper through the gateway <field>\n" ..
-				"- meta::help - /meta leave : If the stratum is higher than 1, go up a level (read: go back)\n" ..
-				"- meta::help - /meta set <name> <value> : Set variable 'name' to 'value', overriding any existing data and predicting the data type (str, float or int)\n" ..
-				"- meta::help - /meta unset <name> : Set variable 'name' to nil, ignoring whether it exists or not\n" ..
-				"- meta::help - /meta purge : Purge all metadata variables\n" ..
+				"- meta::help - /meta open <(x,y,z) [mode] : Open not at (x,y,z) with mode 'mode' (either 'fields' or 'inventory'; default is 'fields')\n" ..
+				"- meta::help - /meta close <ctxindex> : Close the node which context id is 'contextid'\n" ..
+				"- meta::help - /meta show <ctxindex> : Show you the fields/lists available\n" ..
+				"- meta::help - /meta set <ctxindex> <ftype> <name> <value> : Set variable 'name' to 'value', overriding any existing data using data type 'ftype'\n" ..
+				"- meta::help - /meta unset <ctxindex> <name> : Set variable 'name' to nil, ignoring whether it exists or not\n" ..
+				"- meta::help - /meta purge <ctxindex> : Purge all metadata variables\n" ..
 				"- meta::help - /meta list : List manipulation :\n" ..
-				"- meta::help - /meta list init <name> <size> : Initialize list 'name' of size 'size', overriding any existing data\n" ..
-				"- meta::help - /meta list delete <name> : Delete list 'name', ignoring whether it exists or not\n" ..
+				"- meta::help - /meta list enter <ctxindex> <name> : Enter in list <name>\n" ..
+				"- meta::help - /meta list leave <ctxindex> : Go back to the top level of inventory data\n" ..
+				"- meta::help - /meta list init <ctxindex> <name> <size> : Initialize list 'name' of size 'size', overriding any existing data\n" ..
+				"- meta::help - /meta list delete <ctxindex> <name> : Delete list 'name', ignoring whether it exists or not\n" ..
 				"- meta::help - /meta itemstack : ItemStack manipulation :\n" ..
-				"- meta::help - /meta itemstack write <index> <data> : Write an itemstack represented by 'data' at index 'index' of the list you are in\n" ..
-				"- meta::help - /meta itemstack erase <index> : Remove itemstack at index 'index' in the current inventory, regardless of whether it exists or not\n" ..
+				"- meta::help - /meta itemstack write <ctxindex> <index> <data> : Write an itemstack represented by 'data' at index 'index' of the list you are in\n" ..
+				"- meta::help - /meta itemstack add <ctxindex> <data> : Add items of an itemstack represented by 'data' in the list you are in\n" ..
+				"- meta::help - /meta itemstack erase <ctxindex> <index> : Remove itemstack at index 'index' in the current inventory, regardless of whether it exists or not\n" ..
 				"- meta::help - End of Help"
 
+		-- meta context
+		elseif params[1] == "contexts" then
+			local _, ctxs = metatools.contexts_summary()
+			local retstr = ""
+			for _, summ in pairs(ctxs) do
+				retstr = retstr .. ("- meta::contexts : %d: Node at %s owner by %s\n"):
+					format(summ.id, minetest.pos_to_string(summ.pos), summ.owner)
+			end
+			return true, retstr .. ("- meta::contexts - %d contexts"):format(#ctxs)
 		
 		-- meta open (x,y,z) [fields|inventory]
 		elseif params[1] == "open" then
-			-- Check for an already opened node
-			if playerdata[name] then
-				return false, "- meta::open - You already have a node open at " .. minetest.pos_to_string(playerdata[name].position) .. ", please close it (/meta close) before opening another one"
-			end
-
-			-- Is there a position?
-			if not params[2] then
-				return false, "- meta::open - You need to provide the position of the node you wish to open in the following format : (x,y,z)"
-			end
-
-			-- Is it correct?
-			local npos = minetest.string_to_pos(params[2])
-			if not npos then
-				return false, "- meta::open - Invalid position parameter : " .. params[2]
-			end
-
 
 			-- Call the API function
-			return metatools.open_node(name, npos, params[3])
+			return meta_exec("meta::open", metatools.open_node, minetest.string_to_pos(params[2]), params[3] or "fields", name)
 
 		-- meta close
 		elseif params[1] == "close" then
 			-- Call the API function
-			return metatools.close_node(name)
+			return meta_exec("meta::close", metatools.close_node, tonumber(params[2]) or "invalid or missing id", name)
 
 		-- meta show
 		elseif params[1] == "show" then
-			-- Check for an opened node
-			if not playerdata[name] then
-				return false, "- meta::show - No node open, please use '/meta open' first"
-			end
-
-			local status, fieldlist = metatools.show(name)
+			local status, fieldlist = metatools.show(tonumber(params[2]) or "invalid or missing id")
 			if not status then
 				return status, fieldlist
 			else
-				core.chat_send_player(name, "- meta::show - Output :")
-				for i, str in pairs(fieldlist) do
-					core.chat_send_player(name, "- meta::show -     " .. str)
+				local retstr = "- meta::show - Output :\n"
+				for name, field in pairs(fieldlist) do
+					local rpr
+					if type(field) == "table" then
+						rpr = ("-> {...} (size %s)"):format(#field)
+					elseif type(field) == "string" then
+						rpr = ("= %s"):format(dump_normalize(field))
+					elseif type(field) == "userdata" then
+						if field.get_name and field.get_count then
+							rpr = ("= ItemStack({name='%s', count=%d, metadata='%s'})"):
+								format(field:get_name(), field:get_count(), field:get_metadata())
+						else
+							rpr = ("= %s"):format(dump_normalize(field))
+						end
+					else
+						rpr = ("= %s"):format(field)
+					end
+					retstr = retstr .. ("- meta::show -     %s %s\n"):format(name, rpr)
 				end
-				return true, "- meta::show - End of output"
+				return true, retstr .. "- meta::show - End of output"
 			end
 
-		-- meta enter <field>
-		elseif params[1] == "enter" then
-			-- Check for an opened node
-			if not playerdata[name] then
-				return false, "- meta::enter - No node open, please use '/meta open' first"
-			end
-
-			if not params[2] then
-				return false, "- meta::enter - No field name provided for the gateway, please use a gateway field shown in '/meta show'"
-			end
-
-			return metatools.enter(name, params[2])
-
-		-- meta leave
-		elseif params[1] == "leave" then
-			if not playerdata[name] then
-				return false, "- meta::leave - No node open, please use '/meta open' first"
-			end
-
-			return metatools.leave(name)
-
-		-- meta set <varname> <value>
+		-- meta set <type> <varname> <value>
 		elseif params[1] == "set" then
-			if not playerdata[name] then
-				return false, "- meta::set - No node open, please use '/meta open' first"
-			end
-
-			return metatools.set(name, params[2], params[3])
+			return meta_exec("meta::set", metatools.set, tonumber(params[2]) or "invalid or missing contextid", params[3], params[4], metatools.build_param_str(params, 5, ' '))
 
 		-- meta unset <varname>
 		elseif params[1] == "unset" then
-			if not playerdata[name] then
-				return false, "- meta::unset - No open node, please use '/meta open' first"
-			end
-
-			return metatools.unset(name, params[2])
+			return meta_exec("meta::unset", metatools.unset, tonumber(params[2]) or "invalid or missing contextid", params[3])
 
 		-- meta purge
 		elseif params[1] == "purge" then
-			if not playerdata[name] then
-				return false, "- meta::purge - No open node, please use '/meta open' first"
-			end
-
-			return metatools.purge(name)
+			return meta_exec("meta::purge", metatools.purge, tonumber(params[2]) or "missing or invalid id")
 
 		-- meta list...
 		elseif params[1] == "list" then
@@ -454,21 +535,21 @@ minetest.register_chatcommand("meta", {
 				return false, "- meta::list - Subcommand needed, consult '/meta help' for help"
 			end
 
-			-- meta list init <name> <size>
-			if params[2] == "init" then
-				if not playerdata[name] then
-					return false, "- meta::list::init - No node open, please use '/meta open' first"
-				end
+			-- meta list enter <listname>
+			if params[2] == "enter" then
+				return meta_exec("meta::list::enter", metatools.list_enter, tonumber(params[3]) or "invalid or missing contextid", params[4])
 
-				return metatools.list_init(name, params[3], params[4])
+			-- meta list leave
+			elseif params[2] == "leave" then
+				return meta_exec("meta::list::leave", metatools.list_leave, tonumber(params[3]) or "invalid or missing contextid")
+
+			-- meta list init <name> <size>
+			elseif params[2] == "init" then
+				return meta_exec("meta::list::init", metatools.list_init, tonumber(params[3]) or "invalid or missing contextid", params[4], params[5])
 
 			-- meta list delete <name>
 			elseif params[2] == "delete" then
-				if not playerdata[name] then
-					return false, "- meta::list::delete - No open node, please use '/meta open' first"
-				end
-
-				return metatools.list_delete(name, params[3])
+				return meta_exec("meta::list::delete", metatools.list_delete, tonumber(params[3]) or "invalid or missing contextid", params[4])
 
 			else
 				return false, "- meta::list - Unknown subcommand '" .. params[2] .. "', please consult '/meta help' for help"
@@ -480,18 +561,20 @@ minetest.register_chatcommand("meta", {
 				return false, "- meta::itemstack - Subcommand needde, consult '/meta help' for help"
 			end
 
-			if not playerdata[name] then
-				return false, "- meta::itemstack - No open node, please use '/meta open' first"
-			end
-
 			-- meta itemstack erase <index>
 			if params[2] == "erase" then
-
-				return metatools.itemstack_erase(name, params[3])
+				return meta_exec("meta::itemstack::erase", metatools.itemstack_erase, tonumber(params[3]) or "invalid or missing contextid", params[4])
 
 			-- meta itemstack write <index> <itemstack>
 			elseif params[2] == "write" then
-				return metatools.itemstack_write(name, params[3], metatools.build_param_str(params, 4, ' '))
+				return meta_exec("meta::itemstack::write", metatools.itemstack_write, tonumber(params[3]) or "invalid or missing contextid", params[4], metatools.build_param_str(params, 5, ' '))
+			
+			-- meta itemstack add <itemstack>
+			elseif params[2] == "add" then
+				return meta_exec("meta::itemstack::add", metatools.itemstack_add, tonumber(params[3]) or "invalid or missing contextid", metatools.build_param_str(params, 4, ' '))
+
+			else
+				return false, "- meta::itemstack - Unknown subcommand " .. params[2]
 			end
 
 		else
