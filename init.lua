@@ -8,15 +8,18 @@
 --		- Lymkwi/LeMagnesium
 --		- Paly2
 --
---	Version: 1.2
+--	Version: 1.2.1
 --
 ]]--
 
 metatools = {} -- Public namespace
-local playerdata = {} -- Will hold the positions of all players currently using metatools
+local playerlocks = {} -- Selection locks of the players
 local contexts = {}
-local version = 1.3
+local version = "1.2.1"
 local nodelock = {}
+
+local modpath = minetest.get_modpath("metatools")
+dofile(modpath .. "/assertions.lua")
 
 minetest.register_craftitem("metatools:stick",{
 	description = "Meta stick",
@@ -48,6 +51,39 @@ function metatools.build_param_str(table, index, separator)
 	return str
 end
 
+function metatools.get_player_selection(name)
+	return playerlocks[name]
+end
+
+function metatools.player_select(name, ctxid)
+	playerlocks[name] = ctxid
+	return true, ("context %d selected"):format(ctxid)
+end
+
+function metatools.player_unselect(name)
+	playerlocks[name] = nil
+	return true, "context unselected"
+end
+
+function metatools.switch(contextid)
+	local ctx = contexts[contextid]
+	if ctx.mode == "inventory" then
+		ctx.mode = "fields"
+	else
+		ctx.mode = "inventory"
+	end
+	ctx.list = ""
+	return true, "switched to mode " .. ctx.mode
+end
+
+function metatools.get_context_owner(ctxid)
+	for name, id in pairs(playerlocks) do
+		if id == ctxid then
+			return name
+		end
+	end
+end
+
 function assign_context(pos, mode, owner)
 	local i = 1
 	while contexts[i] do i = i + 1 end
@@ -70,97 +106,124 @@ function free_context(contextid)
 	return true
 end
 
-function assert_contextid(ctid)
-	return contexts[ctid] ~= nil
-end
-
-function assert_ownership(ctid, name)
-	return contexts[ctid].owner == "" or (name and contexts[ctid].owner == name)
-end
-
-function assert_pos(pos)
-	return pos and pos.x and pos.y and pos.z and minetest.pos_to_string(pos)
-end
-
-function assert_mode(mode)
-	return mode and (mode == "fields" or mode == "inventory")
-end
-
-function assert_poslock(pos)
-	return nodelock[minetest.pos_to_string(pos)] == nil
-end
-
-function assert_specific_mode(contextid, mode)
-	return assert_contextid(contextid) and contexts[contextid].mode == mode
-end
-
-function assert_field_type(ftype)
-	return ftype and type(ftype) == "string" and (ftype == "int" or ftype == "float" or ftype == "string")
-end
-
-function assert_integer(int)
-	return int and tonumber(int) and tonumber(int) % 1 == 0
-end
-
 function dump_normalize(dmp)
 	return dump(dmp):gsub('\n', ''):gsub('\t', ' ')
 end
 
-function meta_exec(scope, func, ...)
-	local ret, msg = func(...)
+--function meta_assertion(assert_type, params)
+
+function meta_exec(struct)
+	if not struct.scope then
+		struct.scope = "meta"
+	end
+
+	if not struct.func then
+		return
+	end
+
+	if struct.required then
+		-- will call meta_assertion from here
+		for category, req in pairs(struct.required) do
+			minetest.log("Matching " .. category)
+			if category == "position" and not assert_pos(req) then
+				return false, ("- %s - Failure : Invalid position : %s"):format(struct.scope, dump_normalize(req))
+			
+			elseif category == "contextid" and not assert_contextid(req) then
+				return false, ("- %s - Failutre : Invalid contextid : %s"):format(struct.scope, dump_normalize(req))
+
+			elseif category == "no_nodelock" then
+				if not assert_pos(req) then
+					return false, ("- %s - Failure : Invalid pos : %s"):format(struct.scope, dump_normalize(req))
+				end
+				local npos = req
+				if type(npos) == "table" then
+					npos = minetest.pos_to_string(npos)
+				end
+				if nodelock[npos] then
+					return false, ("- %s - Failure : Nodelock on %s"):format(struct.scope, dump_normalize(req))
+				end
+
+			elseif category == "open_mode" and not assert_mode(req) then
+				return false, ("- %s - Failure : Invalid mode %s"):format(struct.scope, dump_normalize(req))
+
+			elseif category == "ownership" then
+				if type(req) ~= "table" or not req.name then
+					return false, ("- %s - Failure : Requirement of ownership invalid or missing a 'name' field"):format(struct.scope)
+				end
+
+				if req.contextid then
+					if not assert_contextid(req.contextid) then
+						return false, ("- %s - Failure : Invalid context id %s"):format(struct.scope, req.contextid)
+					end
+					if not assert_ownership(req.contextid, req.name) then
+						return false, ("- %s - Failure : Context %d is not owner by %s"):format(struct.scope, req.contextid, req.name)
+					end
+				else
+					return false, ("- %s - Failure : No context selected"):format(struct.scope)
+				end
+
+			elseif category == "no_ownership" then
+				if not assert_contextid(req) then
+					return false, ("- %s - Failure : Invalid context id %s"):format(struct.scope, dump_normalize(req))
+				elseif metatools.get_context_owner(req) then
+					return false, ("- %s - Failure : Node already owned"):format(struct.scope)
+				end
+
+			elseif category == "some_ownership" and (not req or not playerlocks[req]) then
+				return false, ("- %s - Failure : No context owned at the moment"):format(struct.scope)
+
+			elseif category == "specific_open_mode" then
+				if not req or not req.mode or not req.contextid then
+					return false, ("- %s - Failure : Invalid specific open mode requirement"):format(struct.scope)
+				end
+
+				if not assert_contextid(req.contextid) then
+					return false, ("- %s - Failure : Invalid context id : %s"):format(struct.scope, dump_normalize(req.contextid))
+				end
+				
+				if not contexts[req.contextid].mode == req.mode then
+					return false, ("- %s - Failure : Invalid mode, %s is required"):format(struct.scope, dump_normalize(req.mode))
+				end
+			end
+			minetest.log(("Match %s succeeded"):format(category))
+		end
+	end
+
+	local ret, msg = struct.func(unpack(struct.params))
 	if ret then
-		return true, ("- %s - Success : %s"):format(scope, msg)
+		return true, ("- %s - Success : %s"):format(struct.scope, msg)
 	else
-		return false, ("- %s - Failure : %s"):format(scope, msg)
+		return false, ("- %s - Failure : %s"):format(struct.scope, msg)
 	end
 end
 
 function metatools.contexts_summary()
 	local ctxs = {}
 	for ctxid, ctx in pairs(contexts) do
-		table.insert(ctxs, 1, {id=ctxid, pos=ctx.position, owner=ctx.owner})
+		table.insert(ctxs, 1, {
+			id = ctxid,
+			pos = ctx.position,
+			owner = metatools.get_context_owner(ctxid) or "nobody",
+			mode = ctx.mode,
+		})
 	end
 	return true, ctxs
 end
 
 function metatools.open_node(pos, mode, owner)
-	if not assert_pos(pos) then
-		return false, "invalid pos " .. dump_normalize(pos)
+	local id = assign_context(pos, mode)
+	if owner then
+		playerlocks[owner] = id
 	end
-
-	if not assert_mode(mode) then
-		return false, "invalid mode " .. dump_normalize(mode)
-	end
-
-	if not assert_poslock(pos) then
-		if nodelock[minetest.pos_to_string(pos)] ~= "" then
-			return false, "node already opened by " .. nodelock[minetest.pos_to_string(pos)]
-		else
-			return false, "node already opened"
-		end
-	end
-
-	return true, "opened node " .. minetest.get_node(pos).name .. " at " .. minetest.pos_to_string(pos) .. " in context ID " .. assign_context(pos, mode, owner)
+	return true, "opened node " .. minetest.get_node(pos).name .. " at " .. minetest.pos_to_string(pos) .. " in context ID " .. id
 end
 
 function metatools.close_node(contextid)--, closer)
-	if not assert_contextid(contextid) then
-		return false, "invalid contextid " .. dump_normalize(contextid)
-	end
-
---	if closer and not assert_ownership(contextid, closer) then
---		return false, "you do not have permission to close that node"
---	end
-
 	free_context(contextid)
 	return true, "node closed"
 end
 
 function metatools.show(contextid)
-	if not assert_contextid(contextid) then
-		return false, "invalid contextid " .. dump_normalize(contextid)
-	end
-
 	local ctx = contexts[contextid]
 	local metabase = minetest.get_meta(ctx.position):to_table()[ctx.mode]
 	if assert_specific_mode(contextid, "inventory") and ctx.list ~= "" then
@@ -215,19 +278,7 @@ function metatools.list_leave(contextid)
 	return true, "left list"
 end
 
-function metatools.set(contextid, ftype, varname, varval)
-	if not assert_contextid(contextid) then
-		return false, "invalid contextid " .. dump_normalize(contextid)
-	end
-
-	if not assert_specific_mode(contextid, "fields") then
-		return false, "invalid mode, fields mode required"
-	end
-
-	if not assert_field_type(ftype) then
-		return false, "invalid field type " .. dump_normalize(ftype)
-	end
-
+function metatools.set(contextid, varname, varval)
 	if not varname or varname == "" then
 		return false, "invalid or empty variable name"
 	end
@@ -239,31 +290,11 @@ function metatools.set(contextid, ftype, varname, varval)
 	local ctx = contexts[contextid]
 	local meta = minetest.get_meta(ctx.position)
 
-	if ftype == "string" then
-		meta:set_string(varname, ("%s"):format(varval))
-	elseif ftype == "int" then
-		if not tonumber(varval) then
-			return false, "invalid integer value " .. dump_normalize(varval)
-		end
-		meta:set_int(varname, tonumber(varval))
-	else
-		if not tonumber(varval) then
-			return false, "invalid float value " .. dump_normalize(varval)
-		end
-		meta:set_float(varname, tonumber(varval))
-	end
+	meta:set_string(varname, ("%s"):format(varval))
 	return true, "value of field " .. varname .. " set to " .. varval
 end
 
 function metatools.unset(contextid, varname)
-	if not assert_contextid(contextid) then
-		return false, "invalid contextid " .. dump_normalize(contextid)
-	end
-
-	if not assert_specific_mode(contextid, "fields") then
-		return false, "invalid mode, fields mode required"
-	end
-
 	if not varname or varname == "" then
 		return false, "invalid or empty variable name"
 	end
@@ -273,15 +304,11 @@ function metatools.unset(contextid, varname)
 end
 
 function metatools.purge(contextid)
-	if not assert_contextid(contextid) then
-		return false, "invalid context id " .. dump_normalize(contextid)
-	end
-
 	local ctx = contexts[contextid]
 	local meta = minetest.get_meta(ctx.position)
 	if ctx.mode == "inventory" then
 		local inv = meta:get_inventory()
-		inv:set_lists(nil)
+		inv:set_lists({})
 		return true, "inventory purged"
 	
 	else
@@ -291,20 +318,12 @@ function metatools.purge(contextid)
 end
 
 function metatools.list_init(contextid, listname, size)
-	if not assert_contextid(contextid) then
-		return false, "invalid context id " .. dump_normalize(contextid)
-	end
-
-	if not assert_specific_mode(contextid, "inventory") then
-		return false, "invalid mode, inventory mode is required"
-	end
-
 	if not listname or listname == "" then
 		return false, "missing or empty list name"
 	end
 
 	if not size or not assert_integer(size) or tonumber(size) < 0 then
-		return false, "invalid size " .. dump_normalize(contextid)
+		return false, "invalid size " .. dump_normalize(size)
 	end
 
 	local inv = minetest.get_meta(contexts[contextid].position):get_inventory()
@@ -434,13 +453,6 @@ minetest.register_chatcommand("meta", {
 		end
 
 		local params = paramstr:split(' ')
-		--[[
-		--	Param map
-		--		[1] = Action
-		--		[2] = Position (meta open), Gateway (meta open), Variable Name (meta unset, meta set), ItemStack Action (meta itemstack)
-		--		[3] = Open mode (meta open), Value (meta set), Inventory Index (meta itemstack <read/write/erase>)
-		--
-		]]--
 
 		-- meta version
 		if params[1] == "version" then
@@ -452,20 +464,22 @@ minetest.register_chatcommand("meta", {
 				"- meta::help - /meta version : Prints out the version\n" ..
 				"- meta::help - /meta help : This very command\n" ..
 				"- meta::help - /meta open <(x,y,z) [mode] : Open not at (x,y,z) with mode 'mode' (either 'fields' or 'inventory'; default is 'fields')\n" ..
-				"- meta::help - /meta close <ctxindex> : Close the node which context id is 'contextid'\n" ..
-				"- meta::help - /meta show <ctxindex> : Show you the fields/lists available\n" ..
-				"- meta::help - /meta set <ctxindex> <ftype> <name> <value> : Set variable 'name' to 'value', overriding any existing data using data type 'ftype'\n" ..
-				"- meta::help - /meta unset <ctxindex> <name> : Set variable 'name' to nil, ignoring whether it exists or not\n" ..
-				"- meta::help - /meta purge <ctxindex> : Purge all metadata variables\n" ..
+				"- meta::help - /meta select <contextid> : Select the node with context <contextid> for operations\n"..
+				"- meta::help - /meta switch : Switch open mode in the current context\n" ..
+				"- meta::help - /meta close : Close the currently selected node\n" ..
+				"- meta::help - /meta show : Show you the fields/lists available\n" ..
+				"- meta::help - /meta set <name> <value> : Set variable 'name' to 'value', overriding any existing data\n" ..
+				"- meta::help - /meta unset <name> : Set variable 'name' to nil, ignoring whether it exists or not\n" ..
+				"- meta::help - /meta purge : Purge all metadata variables or inventory lists (depending on the open mode)\n" ..
 				"- meta::help - /meta list : List manipulation :\n" ..
-				"- meta::help - /meta list enter <ctxindex> <name> : Enter in list <name>\n" ..
-				"- meta::help - /meta list leave <ctxindex> : Go back to the top level of inventory data\n" ..
-				"- meta::help - /meta list init <ctxindex> <name> <size> : Initialize list 'name' of size 'size', overriding any existing data\n" ..
-				"- meta::help - /meta list delete <ctxindex> <name> : Delete list 'name', ignoring whether it exists or not\n" ..
+				"- meta::help - /meta list enter <name> : Enter in list <name>\n" ..
+				"- meta::help - /meta list leave : Go back to the top level of inventory data\n" ..
+				"- meta::help - /meta list init <name> <size> : Initialize list 'name' of size 'size', overriding any existing data\n" ..
+				"- meta::help - /meta list delete <name> : Delete list 'name', ignoring whether it exists or not\n" ..
 				"- meta::help - /meta itemstack : ItemStack manipulation :\n" ..
-				"- meta::help - /meta itemstack write <ctxindex> <index> <data> : Write an itemstack represented by 'data' at index 'index' of the list you are in\n" ..
-				"- meta::help - /meta itemstack add <ctxindex> <data> : Add items of an itemstack represented by 'data' in the list you are in\n" ..
-				"- meta::help - /meta itemstack erase <ctxindex> <index> : Remove itemstack at index 'index' in the current inventory, regardless of whether it exists or not\n" ..
+				"- meta::help - /meta itemstack write <index> <data> : Write an itemstack represented by 'data' at index 'index' of the list you are in\n" ..
+				"- meta::help - /meta itemstack add <data> : Add items of an itemstack represented by 'data' in the list you are in\n" ..
+				"- meta::help - /meta itemstack erase <index> : Remove itemstack at index 'index' in the current inventory, regardless of whether it exists or not\n" ..
 				"- meta::help - End of Help"
 
 		-- meta context
@@ -473,8 +487,8 @@ minetest.register_chatcommand("meta", {
 			local _, ctxs = metatools.contexts_summary()
 			local retstr = ""
 			for _, summ in pairs(ctxs) do
-				retstr = retstr .. ("- meta::contexts : %d: Node at %s owner by %s\n"):
-					format(summ.id, minetest.pos_to_string(summ.pos), summ.owner)
+				retstr = retstr .. ("- meta::contexts : %d: [%s] Node at %s owner by %s\n"):
+					format(summ.id, summ.mode, minetest.pos_to_string(summ.pos), summ.owner)
 			end
 			return true, retstr .. ("- meta::contexts - %d contexts"):format(#ctxs)
 		
@@ -482,52 +496,145 @@ minetest.register_chatcommand("meta", {
 		elseif params[1] == "open" then
 
 			-- Call the API function
-			return meta_exec("meta::open", metatools.open_node, minetest.string_to_pos(params[2]), params[3] or "fields", name)
+			if not params[3] then
+				params[3] = "fields"
+			end
+			return meta_exec({
+				scope = "meta::open",
+				func = metatools.open_node,
+				params = {minetest.string_to_pos(params[2]), params[3], name},
+				required = {
+					mode = params[3],
+					no_nodelock = params[2],
+				}
+			})
 
 		-- meta close
 		elseif params[1] == "close" then
 			-- Call the API function
-			return meta_exec("meta::close", metatools.close_node, tonumber(params[2]) or "invalid or missing id", name)
+			return meta_exec({
+				scope = "meta::close",
+				func = metatools.close_node,
+				params = {metatools.get_player_selection(name)},
+				required = {
+					ownership = {
+						contextid = metatools.get_player_selection(name),
+						name = name
+					}
+				}
+			})
+
+		-- meta select <contextid>
+		elseif params[1] == "select" then
+			return meta_exec({
+				scope = "meta::select",
+				func = metatools.player_select,
+				params = {name, tonumber(params[2])},
+				required = {
+					no_ownership = tonumber(params[2]),
+				}
+			})
+
+		-- meta unselect
+		elseif params[1] == "unselect" then
+			return meta_exec({
+				scope = "meta::unselect",
+				func = metatools.player_unselect,
+				params = {name},
+				required = {
+					some_ownership = name,
+				}
+			})
+
+		-- meta switch
+		elseif params[1] == "switch" then
+			return meta_exec({
+				scope = "meta::switch",
+				func = metatools.switch,
+				params = {metatools.get_player_selection(name)},
+				required = {
+					some_ownership = name,
+				}
+			})
 
 		-- meta show
 		elseif params[1] == "show" then
-			local status, fieldlist = metatools.show(tonumber(params[2]) or "invalid or missing id")
-			if not status then
-				return status, fieldlist
-			else
-				local retstr = "- meta::show - Output :\n"
-				for name, field in pairs(fieldlist) do
-					local rpr
-					if type(field) == "table" then
-						rpr = ("-> {...} (size %s)"):format(#field)
-					elseif type(field) == "string" then
-						rpr = ("= %s"):format(dump_normalize(field))
-					elseif type(field) == "userdata" then
-						if field.get_name and field.get_count then
-							rpr = ("= ItemStack({name='%s', count=%d, metadata='%s'})"):
-								format(field:get_name(), field:get_count(), field:get_metadata())
-						else
-							rpr = ("= %s"):format(dump_normalize(field))
-						end
+			return meta_exec({
+				scope = "meta::show",
+				func = function()
+					local status, fieldlist = metatools.show(metatools.get_player_selection(name))
+					if not status then
+						return status, fieldlist
 					else
-						rpr = ("= %s"):format(field)
+						local retstr = "Output :\n"
+						for name, field in pairs(fieldlist) do
+							local rpr
+							if type(field) == "table" then
+								rpr = ("-> {...} (size %s)"):format(#field)
+							elseif type(field) == "string" then
+								rpr = ("= %s"):format(dump_normalize(field))
+							elseif type(field) == "userdata" then
+								if field.get_name and field.get_count then
+									rpr = ("= ItemStack({name='%s', count=%d, metadata='%s'})"):
+										format(field:get_name(), field:get_count(), field:get_metadata())
+								else
+									rpr = ("= %s"):format(dump_normalize(field))
+								end
+							else
+								rpr = ("= %s"):format(field)
+							end
+							retstr = retstr .. ("- meta::show -     %s %s\n"):format(name, rpr)
+						end
+						return true, retstr .. "- meta::show - End of output"
 					end
-					retstr = retstr .. ("- meta::show -     %s %s\n"):format(name, rpr)
-				end
-				return true, retstr .. "- meta::show - End of output"
-			end
+				end,
+				params = {},
+				required = {
+					some_ownership = name
+				}
+			})
 
-		-- meta set <type> <varname> <value>
+		-- meta set <varname> <value>
 		elseif params[1] == "set" then
-			return meta_exec("meta::set", metatools.set, tonumber(params[2]) or "invalid or missing contextid", params[3], params[4], metatools.build_param_str(params, 5, ' '))
+			return meta_exec({
+				scope = "meta::set",
+				func = metatools.set,
+				params = {metatools.get_player_selection(name), params[2], metatools.build_param_str(params, 3, ' ')},
+				required = {
+					some_ownership = name,
+					specific_open_mode = {
+						mode = "fields",
+						contextid = metatools.get_player_selection(name)
+					}
+				}
+			})
+
 
 		-- meta unset <varname>
 		elseif params[1] == "unset" then
-			return meta_exec("meta::unset", metatools.unset, tonumber(params[2]) or "invalid or missing contextid", params[3])
-
+			return meta_exec({
+				scope = "meta::unset",
+				func = metatools.unset,
+				params = {metatools.get_player_selection(name), params[2]},
+				required = {
+					some_ownership = name,
+					specific_open_mode = {
+						mode = "fields",
+						contextid = metatools.get_player_selection(name)
+					}
+				}
+			})
+			
 		-- meta purge
 		elseif params[1] == "purge" then
-			return meta_exec("meta::purge", metatools.purge, tonumber(params[2]) or "missing or invalid id")
+			return meta_exec({
+				scope = "meta::purge",
+				func = metatools.purge,
+				params = {metatools.get_player_selection(name)},
+				required = {
+					some_ownership = name,
+				}
+			})
 
 		-- meta list...
 		elseif params[1] == "list" then
@@ -537,20 +644,64 @@ minetest.register_chatcommand("meta", {
 
 			-- meta list enter <listname>
 			if params[2] == "enter" then
-				return meta_exec("meta::list::enter", metatools.list_enter, tonumber(params[3]) or "invalid or missing contextid", params[4])
+				return meta_exec({
+					scope = "meta::list::enter",
+					func = metatools.list_enter,
+					params = {metatools.get_player_selection(name), params[3]},
+					required = {
+						some_ownership = name,
+						specific_open_mode = {
+							contextid = metatools.get_player_selection(name),
+							mode = "inventory",
+						},
+					}
+				})
 
 			-- meta list leave
 			elseif params[2] == "leave" then
-				return meta_exec("meta::list::leave", metatools.list_leave, tonumber(params[3]) or "invalid or missing contextid")
+				return meta_exec({
+					scope = "meta::list::leave",
+					func = metatools.list_leave,
+					params = {metatools.get_player_selection(name)},
+					required = {
+						some_ownership = name,
+						specific_open_mode = {
+							contextid = metatools.get_player_selection(name),
+							mode = "inventory",
+						}
+					}
+				})
 
 			-- meta list init <name> <size>
 			elseif params[2] == "init" then
-				return meta_exec("meta::list::init", metatools.list_init, tonumber(params[3]) or "invalid or missing contextid", params[4], params[5])
+				return meta_exec({
+					scope = "meta::list::init",
+					func = metatools.list_init,
+					params = {metatools.get_player_selection(name), params[3], params[4]},
+					required = {
+						some_ownership = name,
+						specific_open_mode = {
+							contextid = metatools.get_player_selection(name),
+							mode = "inventory",
+						}
+					}
+				})
 
 			-- meta list delete <name>
 			elseif params[2] == "delete" then
-				return meta_exec("meta::list::delete", metatools.list_delete, tonumber(params[3]) or "invalid or missing contextid", params[4])
-
+				return meta_exec({
+					scope = "meta::list::delete",
+					func = metatools.list_delete,
+					params = {metatools.get_player_selection(name), params[3]},
+					required = {
+						some_ownership = name,
+						specific_open_mode = {
+							contextid = metatools.get_player_selection(name),
+							mode = "inventory",
+						}
+					}
+				})
+			
 			else
 				return false, "- meta::list - Unknown subcommand '" .. params[2] .. "', please consult '/meta help' for help"
 			end
@@ -563,15 +714,48 @@ minetest.register_chatcommand("meta", {
 
 			-- meta itemstack erase <index>
 			if params[2] == "erase" then
-				return meta_exec("meta::itemstack::erase", metatools.itemstack_erase, tonumber(params[3]) or "invalid or missing contextid", params[4])
+				return meta_exec({
+					scope = "meta::itemstack::erase",
+					func = metatools.itemstack_erase,
+					params = {metatools.get_player_selection(name), params[3]},
+					required = {
+						some_ownership = name,
+						specific_open_mode = {
+							contextid = metatools.get_player_selection(name),
+							mode = "inventory",
+						}
+					}
+				})
 
 			-- meta itemstack write <index> <itemstack>
 			elseif params[2] == "write" then
-				return meta_exec("meta::itemstack::write", metatools.itemstack_write, tonumber(params[3]) or "invalid or missing contextid", params[4], metatools.build_param_str(params, 5, ' '))
+				return meta_exec({
+					scope = "meta::itemstack::write",
+					func = metatools.itemstack_write,
+					params = {metatools.get_player_selection(name), params[3], metatools.build_param_str(params, 4, ' ')},
+					required = {
+						some_ownership = name,
+						specific_open_mode = {
+							contextid = metatools.get_player_selection(name),
+							mode = "inventory",
+						}
+					}
+				})
 			
 			-- meta itemstack add <itemstack>
 			elseif params[2] == "add" then
-				return meta_exec("meta::itemstack::add", metatools.itemstack_add, tonumber(params[3]) or "invalid or missing contextid", metatools.build_param_str(params, 4, ' '))
+				return meta_exec({
+					scope = "meta::itemstack::write",
+					func = metatools.itemstack_add,
+					params = {metatools.get_player_selection(name), metatools.build_param_str(params, 3, ' ')},
+					required = {
+						some_ownership = name,
+						specific_open_mode = {
+							contextid = metatools.get_player_selection(name),
+							mode = "inventory",
+						}
+					}
+				})
 
 			else
 				return false, "- meta::itemstack - Unknown subcommand " .. params[2]
