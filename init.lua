@@ -124,7 +124,6 @@ function meta_exec(struct)
 	if struct.required then
 		-- will call meta_assertion from here
 		for category, req in pairs(struct.required) do
-			minetest.log("Matching " .. category)
 			if category == "position" and not assert_pos(req) then
 				return false, ("- %s - Failure : Invalid position : %s"):format(struct.scope, dump_normalize(req))
 			
@@ -185,7 +184,6 @@ function meta_exec(struct)
 					return false, ("- %s - Failure : Invalid mode, %s is required"):format(struct.scope, dump_normalize(req.mode))
 				end
 			end
-			minetest.log(("Match %s succeeded"):format(category))
 		end
 	end
 
@@ -315,6 +313,15 @@ function metatools.purge(contextid)
 		meta:from_table(nil)
 		return true, "fields purged"
 	end
+end
+
+function metatools.prune()
+	for id, ctx in pairs(contexts) do
+		if not metatools.get_context_owner(id) then
+			metatools.close_node(id)
+		end
+	end
+	return true, "contexts pruned"
 end
 
 function metatools.list_init(contextid, listname, size)
@@ -467,6 +474,7 @@ minetest.register_chatcommand("meta", {
 				"- meta::help - /meta select <contextid> : Select the node with context <contextid> for operations\n"..
 				"- meta::help - /meta switch : Switch open mode in the current context\n" ..
 				"- meta::help - /meta close : Close the currently selected node\n" ..
+				"- meta::help - /meta prune : Close all currently unoperated nodes\n" ..
 				"- meta::help - /meta show : Show you the fields/lists available\n" ..
 				"- meta::help - /meta set <name> <value> : Set variable 'name' to 'value', overriding any existing data\n" ..
 				"- meta::help - /meta unset <name> : Set variable 'name' to nil, ignoring whether it exists or not\n" ..
@@ -544,6 +552,14 @@ minetest.register_chatcommand("meta", {
 				required = {
 					some_ownership = name,
 				}
+			})
+
+		-- meta prune
+		elseif params[1] == "prune" then
+			return meta_exec({
+				scope = "meta::prune",
+				func = metatools.prune,
+				params = {},
 			})
 
 		-- meta switch
