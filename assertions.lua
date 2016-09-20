@@ -1,7 +1,7 @@
 -- Assertion tools for Metatools
 
 function assert_contextid(ctid)
-	return contexts[ctid] ~= nil
+	return metatools.contexts[ctid] ~= nil
 end
 
 function assert_ownership(ctid, name)
@@ -25,7 +25,7 @@ function assert_poslock(pos)
 end
 
 function assert_specific_mode(contextid, mode)
-	return assert_contextid(contextid) and contexts[contextid].mode == mode
+	return assert_contextid(contextid) and metatools.contexts[contextid].mode == mode
 end
 
 function assert_field_type(ftype)

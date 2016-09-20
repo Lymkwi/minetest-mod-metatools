@@ -13,8 +13,8 @@
 ]]--
 
 metatools = {} -- Public namespace
+metatools.contexts = {}
 local playerlocks = {} -- Selection locks of the players
-local contexts = {}
 local version = "1.2.1"
 local nodelock = {}
 
@@ -66,7 +66,7 @@ function metatools.player_unselect(name)
 end
 
 function metatools.switch(contextid)
-	local ctx = contexts[contextid]
+	local ctx = metatools.contexts[contextid]
 	if ctx.mode == "inventory" then
 		ctx.mode = "fields"
 	else
@@ -86,9 +86,9 @@ end
 
 function assign_context(pos, mode, owner)
 	local i = 1
-	while contexts[i] do i = i + 1 end
+	while metatools.contexts[i] do i = i + 1 end
 
-	contexts[i] = {
+	metatools.contexts[i] = {
 		owner = owner or "",
 		position = pos,
 		list = "",
@@ -101,8 +101,8 @@ function assign_context(pos, mode, owner)
 end
 
 function free_context(contextid)
-	nodelock[minetest.pos_to_string(contexts[contextid].position)] = nil
-	contexts[contextid] = nil
+	nodelock[minetest.pos_to_string(metatools.contexts[contextid].position)] = nil
+	metatools.contexts[contextid] = nil
 	return true
 end
 
@@ -180,7 +180,7 @@ function meta_exec(struct)
 					return false, ("- %s - Failure : Invalid context id : %s"):format(struct.scope, dump_normalize(req.contextid))
 				end
 				
-				if not contexts[req.contextid].mode == req.mode then
+				if not metatools.contexts[req.contextid].mode == req.mode then
 					return false, ("- %s - Failure : Invalid mode, %s is required"):format(struct.scope, dump_normalize(req.mode))
 				end
 			end
@@ -222,7 +222,7 @@ function metatools.close_node(contextid)--, closer)
 end
 
 function metatools.show(contextid)
-	local ctx = contexts[contextid]
+	local ctx = metatools.contexts[contextid]
 	local metabase = minetest.get_meta(ctx.position):to_table()[ctx.mode]
 	if assert_specific_mode(contextid, "inventory") and ctx.list ~= "" then
 		metabase = metabase[ctx.list]
@@ -244,7 +244,7 @@ function metatools.list_enter(contextid, listname)
 		return false, "no list name provided"
 	end
 
-	local ctx = contexts[contextid]
+	local ctx = metatools.contexts[contextid]
 	if ctx.list ~= "" then
 		return false, "unable to reach another list until leaving the current one"
 	end
@@ -254,7 +254,7 @@ function metatools.list_enter(contextid, listname)
 		return false, "inexistent or invalid list called " .. dump_normalize(listname)
 	end
 
-	contexts[contextid].list = listname
+	metatools.contexts[contextid].list = listname
 	return true, "entered list " .. listname
 end
 
@@ -267,7 +267,7 @@ function metatools.list_leave(contextid)
 		return false, "invalid mode, inventory mode required"
 	end
 
-	local ctx = contexts[contextid]
+	local ctx = metatools.contexts[contextid]
 	if ctx.list == "" then
 		return false, "cannot leave, not in a list"
 	end
@@ -285,7 +285,7 @@ function metatools.set(contextid, varname, varval)
 		return false, "missing value, use unset to set variable to nil"
 	end
 
-	local ctx = contexts[contextid]
+	local ctx = metatools.contexts[contextid]
 	local meta = minetest.get_meta(ctx.position)
 
 	meta:set_string(varname, ("%s"):format(varval))
@@ -297,12 +297,12 @@ function metatools.unset(contextid, varname)
 		return false, "invalid or empty variable name"
 	end
 
-	minetest.get_meta(contexts[contextid].position):set_string(varname, nil)
+	minetest.get_meta(metatools.contexts[contextid].position):set_string(varname, nil)
 	return true, "field " .. varname .. " unset"
 end
 
 function metatools.purge(contextid)
-	local ctx = contexts[contextid]
+	local ctx = metatools.contexts[contextid]
 	local meta = minetest.get_meta(ctx.position)
 	if ctx.mode == "inventory" then
 		local inv = meta:get_inventory()
@@ -333,7 +333,7 @@ function metatools.list_init(contextid, listname, size)
 		return false, "invalid size " .. dump_normalize(size)
 	end
 
-	local inv = minetest.get_meta(contexts[contextid].position):get_inventory()
+	local inv = minetest.get_meta(metatools.contexts[contextid].position):get_inventory()
 	inv:set_list(listname, {})
 	inv:set_size(listname, tonumber(size))
 
@@ -353,7 +353,7 @@ function metatools.list_delete(contextid, listname)
 		return false, "missing or empty list name"
 	end
 
-	local ctx = contexts[contextid]
+	local ctx = metatools.contexts[contextid]
 	if ctx.list == listname then
 		ctx.list = ""
 	end
@@ -378,7 +378,7 @@ function metatools.itemstack_erase(contextid, index)
 		return false, "invalid index"
 	end
 
-	local ctx = contexts[contextid]
+	local ctx = metatools.contexts[contextid]
 	if ctx.list == "" then
 		return false, "your presence is required in a list"
 	end
@@ -409,7 +409,7 @@ function metatools.itemstack_write(contextid, index, data)
 		return false, "invalid itemstack representation " .. dump_normalize(data)
 	end
 
-	local ctx = contexts[contextid]
+	local ctx = metatools.contexts[contextid]
 	if ctx.list == "" then
 		return false, "your presence is required in a list"
 	end
@@ -436,7 +436,7 @@ function metatools.itemstack_add(contextid, data)
 		return false, "invalid itemstack representation " .. dump_normalize(data)
 	end
 
-	local ctx = contexts[contextid]
+	local ctx = metatools.contexts[contextid]
 	if ctx.list == "" then
 		return false, "your presence is required in a list"
 	end
