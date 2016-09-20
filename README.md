@@ -2,7 +2,7 @@ Minetest mod metatools
 ######################
 
 A mod inspired by mgl512's itemframe issue
-Version : 1.2.1
+Version : 1.2.2
 
 # Authors
  - LeMagnesium / Mg / ElectronLibre : Source code writer

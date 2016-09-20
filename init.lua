@@ -8,14 +8,14 @@
 --		- Lymkwi/LeMagnesium
 --		- Paly2
 --
---	Version: 1.2.1
+--	Version: 1.2.2
 --
 ]]--
 
 metatools = {} -- Public namespace
 metatools.contexts = {}
-local playerlocks = {} -- Selection locks of the players
-local version = "1.2.1"
+metatools.playerlocks = {} -- Selection locks of the players
+local version = "1.2.2"
 local nodelock = {}
 
 local modpath = minetest.get_modpath("metatools")
@@ -40,8 +40,44 @@ minetest.register_craftitem("metatools:stick",{
 	end,
 })
 
+-- Useful callbacks
+minetest.register_on_dignode(function(pos, node, digger)
+	local spos = minetest.pos_to_string(pos)
+	local ctxid = metatools.get_context_from_pos(pos)
+	if ctxid then
+		if not metatools.get_context_owner(ctxid) then
+			metatools.alert_users("Node at " .. spos .. " dug by " .. (digger:get_player_name() or " a drone ") .. " : context " .. ctxid .. " closed")
+			metatools.close_node(ctxid)
+		else
+			local owner = metatools.get_context_owner(ctxid)
+			if owner == digger:get_player_name() then
+				metatools.alert_users(owner .. " dug themselves out of node at " .. spos .. " : context " .. ctxid .. "closed")
+				metatools.close_node(ctxid)
+			else
+				minetest.chat_send_player(digger:get_player_name() or "", "- meta - You are not allowed to dig the present node at " .. spos .. " : someone is operating on it")
+				minetest.chat_send_player(metatools.get_context_owner(ctxid), "- meta - " .. digger:get_player_name() .. " tried to dig the node you are operating on")
+				return true
+			end
+		end
+	end
+end)
+
 -- Functions
 function metatools.get_version() return version end
+
+function metatools.get_context_from_pos(pos)
+	for id, ctx in pairs(metatools.contexts) do
+		if minetest.pos_to_string(ctx.position) == minetest.pos_to_string(pos) then
+			return id
+		end
+	end
+end
+
+function metatools.alert_users(msg)
+	for name, _ in pairs(metatools.playerlocks) do
+		minetest.chat_send_player(name, ("- meta::alert - ALERT: %s"):format(msg))
+	end
+end
 
 function metatools.build_param_str(table, index, separator)
 	local str = table[index]
@@ -52,16 +88,16 @@ function metatools.build_param_str(table, index, separator)
 end
 
 function metatools.get_player_selection(name)
-	return playerlocks[name]
+	return metatools.playerlocks[name]
 end
 
 function metatools.player_select(name, ctxid)
-	playerlocks[name] = ctxid
+	metatools.playerlocks[name] = ctxid
 	return true, ("context %d selected"):format(ctxid)
 end
 
 function metatools.player_unselect(name)
-	playerlocks[name] = nil
+	metatools.playerlocks[name] = nil
 	return true, "context unselected"
 end
 
@@ -77,7 +113,7 @@ function metatools.switch(contextid)
 end
 
 function metatools.get_context_owner(ctxid)
-	for name, id in pairs(playerlocks) do
+	for name, id in pairs(metatools.playerlocks) do
 		if id == ctxid then
 			return name
 		end
@@ -168,7 +204,7 @@ function meta_exec(struct)
 					return false, ("- %s - Failure : Node already owned"):format(struct.scope)
 				end
 
-			elseif category == "some_ownership" and (not req or not playerlocks[req]) then
+			elseif category == "some_ownership" and (not req or not metatools.playerlocks[req]) then
 				return false, ("- %s - Failure : No context owned at the moment"):format(struct.scope)
 
 			elseif category == "specific_open_mode" then
@@ -189,6 +225,9 @@ function meta_exec(struct)
 
 	local ret, msg = struct.func(unpack(struct.params))
 	if ret then
+		if struct.success then
+			struct.success(struct.params, {ret, msg})
+		end
 		return true, ("- %s - Success : %s"):format(struct.scope, msg)
 	else
 		return false, ("- %s - Failure : %s"):format(struct.scope, msg)
@@ -197,7 +236,7 @@ end
 
 function metatools.contexts_summary()
 	local ctxs = {}
-	for ctxid, ctx in pairs(contexts) do
+	for ctxid, ctx in pairs(metatools.contexts) do
 		table.insert(ctxs, 1, {
 			id = ctxid,
 			pos = ctx.position,
@@ -211,7 +250,7 @@ end
 function metatools.open_node(pos, mode, owner)
 	local id = assign_context(pos, mode)
 	if owner then
-		playerlocks[owner] = id
+		metatools.playerlocks[owner] = id
 	end
 	return true, "opened node " .. minetest.get_node(pos).name .. " at " .. minetest.pos_to_string(pos) .. " in context ID " .. id
 end
@@ -222,6 +261,9 @@ function metatools.close_node(contextid)--, closer)
 end
 
 function metatools.show(contextid)
+	if not assert_contextid(contextid) then
+		return false, "invalid or missing context id"
+	end
 	local ctx = metatools.contexts[contextid]
 	local metabase = minetest.get_meta(ctx.position):to_table()[ctx.mode]
 	if assert_specific_mode(contextid, "inventory") and ctx.list ~= "" then
@@ -316,7 +358,7 @@ function metatools.purge(contextid)
 end
 
 function metatools.prune()
-	for id, ctx in pairs(contexts) do
+	for id, ctx in pairs(metatools.contexts) do
 		if not metatools.get_context_owner(id) then
 			metatools.close_node(id)
 		end
@@ -471,7 +513,9 @@ minetest.register_chatcommand("meta", {
 				"- meta::help - /meta version : Prints out the version\n" ..
 				"- meta::help - /meta help : This very command\n" ..
 				"- meta::help - /meta open <(x,y,z) [mode] : Open not at (x,y,z) with mode 'mode' (either 'fields' or 'inventory'; default is 'fields')\n" ..
-				"- meta::help - /meta select <contextid> : Select the node with context <contextid> for operations\n"..
+				"- meta::help - /meta select <contextid> : Select the node with context <contextid> for operations\n" ..
+				"- meta::help - /meta unselect : Unselect the context you are currently in\n" ..
+				"- meta::help - /meta contexts : Show all open contexts with id, operator, position and open mode\n" ..
 				"- meta::help - /meta switch : Switch open mode in the current context\n" ..
 				"- meta::help - /meta close : Close the currently selected node\n" ..
 				"- meta::help - /meta prune : Close all currently unoperated nodes\n" ..
@@ -514,7 +558,10 @@ minetest.register_chatcommand("meta", {
 				required = {
 					mode = params[3],
 					no_nodelock = params[2],
-				}
+				},
+				success = function(fparams)
+					metatools.alert_users(name .. " opened node at " .. minetest.pos_to_string(fparams[1]))
+				end
 			})
 
 		-- meta close
@@ -529,7 +576,10 @@ minetest.register_chatcommand("meta", {
 						contextid = metatools.get_player_selection(name),
 						name = name
 					}
-				}
+				},
+				success = function(fparams)
+					metatools.alert_users(name .. " closed node of id " .. fparams[1])
+				end
 			})
 
 		-- meta select <contextid>
@@ -540,7 +590,10 @@ minetest.register_chatcommand("meta", {
 				params = {name, tonumber(params[2])},
 				required = {
 					no_ownership = tonumber(params[2]),
-				}
+				},
+				success = function(fparams)
+					metatools.alert_users(name .. " selected context of id " .. fparams[1])
+				end
 			})
 
 		-- meta unselect
@@ -551,7 +604,10 @@ minetest.register_chatcommand("meta", {
 				params = {name},
 				required = {
 					some_ownership = name,
-				}
+				},
+				success = function(fparams)
+					metatools.alert_users(name .. " unselected their context")
+				end
 			})
 
 		-- meta prune
@@ -560,6 +616,9 @@ minetest.register_chatcommand("meta", {
 				scope = "meta::prune",
 				func = metatools.prune,
 				params = {},
+				success = function()
+					metatools.alert_users(name .. " is pruning contexts!")
+				end
 			})
 
 		-- meta switch
@@ -570,7 +629,10 @@ minetest.register_chatcommand("meta", {
 				params = {metatools.get_player_selection(name)},
 				required = {
 					some_ownership = name,
-				}
+				},
+				success = function(fparams)
+					metatools.alert_users(name .. " switched context (ID=" .. fparams[1] .. ")'s open mode")
+				end
 			})
 
 		-- meta show
@@ -649,7 +711,10 @@ minetest.register_chatcommand("meta", {
 				params = {metatools.get_player_selection(name)},
 				required = {
 					some_ownership = name,
-				}
+				},
+				success = function(fparams)
+					metatools.alert_users(name .. " purged context " .. fparams[1])
+				end
 			})
 
 		-- meta list...

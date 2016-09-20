@@ -5,7 +5,7 @@ function assert_contextid(ctid)
 end
 
 function assert_ownership(ctid, name)
-	return playerlocks[name] == ctid
+	return metatools.playerlocks[name] == ctid
 end
 
 function assert_pos(pos)
